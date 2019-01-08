@@ -277,7 +277,7 @@ object PageElement {
   }
 
   implicit val RichLinkBlockElementWrites: Writes[RichLinkBlockElement] = Json.writes[RichLinkBlockElement]
-  val blockElementWrites: Writes[PageElement] = Json.writes[PageElement]
+  implicit val blockElementWrites: Writes[PageElement] = Json.writes[PageElement]
 
 }
 

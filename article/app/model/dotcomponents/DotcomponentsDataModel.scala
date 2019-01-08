@@ -4,22 +4,19 @@ import common.Edition
 import conf.Configuration
 import controllers.ArticlePage
 import model.SubMetaLinks
-import model.dotcomrendering.pageElements.PageElement
+import model.dotcomrendering.pageElements._
 import navigation.NavMenu
 import play.api.libs.json.{JsValue, Json, Writes}
 import play.api.mvc.RequestHeader
 import views.support.{CamelCase, GUDateTimeFormat}
-import ai.x.play.json.Jsonx
 import common.Maps.RichMap
 import navigation.UrlHelpers.{Footer, Header, SideMenu, getReaderRevenueUrl}
 import navigation.ReaderRevenueSite.{Support, SupportContribute, SupportSubscribe}
-import ai.x.play.json.implicits.optionWithNull // Note, required despite Intellij saying otherwise
 
 // We have introduced our own set of objects for serializing data to the DotComponents API,
 // because we don't want people changing the core frontend models and as a side effect,
 // making them incompatible with Dotcomponents. By having our own set of models, there's
-// only one reason for change.
-// exceptions: we do resuse the existing Nav & BlockElement classes right now
+// only one reason for change. exceptions: we do resuse the existing Nav classes right now
 
 case class TagProperties(
     id: String,
@@ -27,6 +24,7 @@ case class TagProperties(
     webTitle: String,
     twitterHandle: Option[String]
 )
+
 case class Tag(
     properties: TagProperties
 )
@@ -53,11 +51,54 @@ case class ReaderRevenueLinks(
   sideMenu: ReaderRevenueLink
 )
 
-case class PageData(
+case class Meta(
+  isImmersive: Boolean,
+  isHosted: Boolean,
+  shouldHideAds: Boolean,
+  hasStoryPackage: Boolean,
+  hasRelated: Boolean
+)
+
+case class Tags(
+  authorIds: Option[String],
+  toneIds: Option[String],
+  keywordIds: Option[String],
+  commissioningDesks: Option[String],
+  all: List[Tag]
+)
+
+// APPLICATION LEVEL config
+// Configuration belongs here if it is to do with infrastructure or application itself
+
+case class DCConfig(
+  ajaxUrl: String,
+  guardianBaseURL: String,
+  sentryHost: Option[String],
+  sentryPublicApiKey: Option[String],
+  switches: Map[String,Boolean],
+  beaconUrl: String
+)
+
+// SITE LEVEL config
+// Configuration belongs here if it is required for the guardian site, but doesn't change based on the page we're on
+
+case class DCSite(
+  nav: NavMenu,
+  readerRevenueLinks: ReaderRevenueLinks
+)
+
+// PAGE LEVEL config
+// Configuration belongs here if it's dependent on the page we're on (the content we're showing)
+
+case class DCContent(
+    standfirst: Option[String],
+    main: String,
+    body: String,
+    blocks: Blocks,
+    tags: Tags,
     author: String,
     pageId: String,
     pillar: Option[String],
-    ajaxUrl: String,
     webPublicationDate: Long,
     webPublicationDateDisplay: String,
     section: Option[String],
@@ -65,62 +106,23 @@ case class PageData(
     webTitle: String,
     byline: String,
     contentId: Option[String],
-    authorIds: Option[String],
-    keywordIds: Option[String],
-    toneIds: Option[String],
     seriesId: Option[String],
-    isHosted: Boolean,
-    beaconUrl: String,
     editionId: String,
     edition: String,
     contentType: Option[String],
-    commissioningDesks: Option[String],
     subMetaLinks: SubMetaLinks,
-    sentryHost: Option[String],
-    sentryPublicApiKey: Option[String],
-    switches: Map[String,Boolean],
-
-
-    // AMP specific
-    guardianBaseURL: String,
     webURL: String,
-    shouldHideAds: Boolean,
-    hasStoryPackage: Boolean,
-    hasRelated: Boolean,
+    meta: Meta
 )
 
-case class Config(
-    isImmersive: Boolean,
-    page: PageData,
-    nav: NavMenu,
-    readerRevenueLinks: ReaderRevenueLinks
-)
-
-case class ContentFields(
-    standfirst: Option[String],
-    main: String,
-    body: String,
-    blocks: Blocks
-)
-
-case class DotcomponentsDataModel(
-    contentFields: ContentFields,
-    config: Config,
-    tags: List[Tag],
-    version: Int
-)
+// JSON writers
 
 object Block {
-  implicit val blockElementWrites: Writes[PageElement] = Json.writes[PageElement]
   implicit val writes = Json.writes[Block]
 }
 
 object Blocks {
   implicit val writes = Json.writes[Blocks]
-}
-
-object ContentFields {
-  implicit val writes = Json.writes[ContentFields]
 }
 
 object TagProperties {
@@ -131,6 +133,10 @@ object Tag {
   implicit val writes = Json.writes[Tag]
 }
 
+object Tags {
+  implicit val writes = Json.writes[Tags]
+}
+
 object ReaderRevenueLink {
   implicit val writes = Json.writes[ReaderRevenueLink]
 }
@@ -139,22 +145,35 @@ object ReaderRevenueLinks {
   implicit val writes = Json.writes[ReaderRevenueLinks]
 }
 
-object PageData {
-  // We use Jsonx here because PageData exceeds 22 fields and
-  // regular Play JSON is unable to serialise this. See, e.g.
-  //
-  // * https://github.com/playframework/play-json/issues/3
-  // * https://stackoverflow.com/questions/23571677/22-fields-limit-in-scala-2-11-play-framework-2-3-case-classes-and-functions/23588132#23588132
-  implicit val formats = Jsonx.formatCaseClass[PageData]
+object Meta {
+  implicit val writes = Json.writes[Meta]
 }
 
-object Config {
-  implicit val writes = Json.writes[Config]
+object DCContent {
+  implicit val writes = Json.writes[DCContent]
 }
+
+object DCSite {
+  implicit val writes = Json.writes[DCSite]
+}
+
+object DCConfig {
+  implicit val writes = Json.writes[DCConfig]
+}
+
+
+// The final composite data model
+
+case class DotcomponentsDataModel(
+  content: DCContent,
+  site: DCSite,
+  config: DCConfig,
+  version: Int
+)
 
 object DotcomponentsDataModel {
 
-  val VERSION = 1
+  val VERSION = 2
 
   def fromArticle(articlePage: ArticlePage, request: RequestHeader): DotcomponentsDataModel = {
 
@@ -171,15 +190,7 @@ object DotcomponentsDataModel {
 
     val dcBlocks = Blocks(mainBlock, bodyBlocks)
 
-    val contentFields = ContentFields(
-      article.fields.standfirst,
-      article.fields.main,
-      article.fields.body,
-      dcBlocks
-    )
-
     val jsConfig = (k: String) => articlePage.getJavascriptConfig.get(k).map(_.as[String])
-
 
     val jsPageData = Configuration.javascript.pageData mapKeys { key =>
       CamelCase.fromHyphenated(key.split('.').lastOption.getOrElse(""))
@@ -189,40 +200,7 @@ object DotcomponentsDataModel {
       acc + (CamelCase.fromHyphenated(switch.name) -> switch.isSwitchedOn)
     })
 
-    val pageData = PageData(
-      article.tags.contributors.map(_.name).mkString(","),
-      article.metadata.id,
-      article.metadata.pillar.map(_.toString),
-      Configuration.ajax.url,
-      article.trail.webPublicationDate.getMillis,
-      GUDateTimeFormat.formatDateTimeForDisplay(article.trail.webPublicationDate, request),
-      article.metadata.section.map(_.value),
-      article.trail.headline,
-      article.metadata.webTitle,
-      article.trail.byline.getOrElse(""),
-      jsConfig("contentId"),   // source: content.scala
-      jsConfig("authorIds"),   // source: meta.scala
-      jsConfig("keywordIds"),  // source: tags.scala and meta.scala
-      jsConfig("toneIds"),     // source: meta.scala
-      jsConfig("seriesId"),    // source: content.scala
-      article.metadata.isHosted,
-      Configuration.debug.beaconUrl,
-      Edition(request).id,
-      Edition(request).displayName,
-      jsConfig("contentType"),
-      jsConfig("commissioningDesks"),
-      article.content.submetaLinks,
-      jsPageData.get("sentryHost"),
-      jsPageData.get("sentryPublicApiKey"),
-      switches,
-      Configuration.site.host,
-      article.metadata.webUrl,
-      article.content.shouldHideAdverts,
-      hasStoryPackage = article.content.hasStoryPackage,
-      hasRelated = article.content.showInRelated,
-    )
-
-    val tags = article.tags.tags.map(
+    val allTags = article.tags.tags.map(
       t => Tag(
         TagProperties(
           t.id,
@@ -259,17 +237,63 @@ object DotcomponentsDataModel {
       sideMenuReaderRevenueLink
     )
 
-    val config = Config(
-      article.isImmersive,
-      pageData,
+    val site = DCSite(
       navMenu,
       readerRevenueLinks
     )
 
-    DotcomponentsDataModel(
-      contentFields,
-      config,
+    val tags = Tags(
+      jsConfig("authorIds"),
+      jsConfig("keywordIds"),
+      jsConfig("toneIds"),
+      jsConfig("commissioningDesks"),
+      allTags
+    )
+
+    val content = DCContent(
+      article.fields.standfirst,
+      article.fields.main,
+      article.fields.body,
+      dcBlocks,
       tags,
+      article.tags.contributors.map(_.name).mkString(","),
+      article.metadata.id,
+      article.metadata.pillar.map(_.toString),
+      article.trail.webPublicationDate.getMillis,
+      GUDateTimeFormat.formatDateTimeForDisplay(article.trail.webPublicationDate, request),
+      article.metadata.section.map(_.value),
+      article.trail.headline,
+      article.metadata.webTitle,
+      article.trail.byline.getOrElse(""),
+      jsConfig("contentId"),   // source: content.scala
+      jsConfig("seriesId"),    // source: content.scala
+      Edition(request).id,
+      Edition(request).displayName,
+      jsConfig("contentType"),
+      article.content.submetaLinks,
+      article.metadata.webUrl,
+      meta = Meta (
+        article.isImmersive,
+        article.metadata.isHosted,
+        article.content.shouldHideAdverts,
+        hasStoryPackage = article.content.hasStoryPackage,
+        hasRelated = article.content.showInRelated
+      )
+    )
+
+    val config = DCConfig(
+      Configuration.ajax.url,
+      Configuration.site.host,
+      jsPageData.get("sentryHost"),
+      jsPageData.get("sentryPublicApiKey"),
+      switches,
+      Configuration.debug.beaconUrl
+    )
+
+    DotcomponentsDataModel(
+      content,
+      site,
+      config,
       VERSION
     )
 
@@ -277,17 +301,11 @@ object DotcomponentsDataModel {
 
   def toJson(model: DotcomponentsDataModel): JsValue = {
 
-    // make what we have look a bit closer to what dotcomponents currently expects
-
     implicit val DotComponentsDataModelWrites = new Writes[DotcomponentsDataModel] {
       def writes(model: DotcomponentsDataModel) = Json.obj(
+        "content" -> model.content,
+        "site" -> model.site,
         "config" -> model.config,
-        "contentFields" -> Json.obj(
-          "fields" -> model.contentFields
-        ),
-        "tags" -> Json.obj(
-          "tags" -> model.tags
-        ),
         "version" -> model.version
       )
     }
@@ -295,7 +313,6 @@ object DotcomponentsDataModel {
     Json.toJson(model)
 
   }
-
 
   def toJsonString(model: DotcomponentsDataModel): String = {
     Json.prettyPrint(toJson(model))
